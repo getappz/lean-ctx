@@ -652,6 +652,14 @@ pub(super) fn build(sections: &mut BTreeMap<String, SectionSchema>) {
             ),
         );
     root.insert(
+        "extra_rewrite_commands".into(),
+        key(
+            "array",
+            serde_json::json!([]),
+            "Extra command names treated as rewritable by the PreToolUse hook, on top of the built-in registry. Routes project tools (mise, turbo, vitest, wrangler) through lean-ctx -c for compression without rebuilding. Additive; prefix/exact match on the command head.",
+        ),
+    );
+    root.insert(
         "shell_strict_mode".into(),
         key(
             "bool",

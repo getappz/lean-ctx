@@ -269,7 +269,24 @@ fn rewrite_skip_reason(cmd: &str) -> &'static str {
 }
 
 fn is_rewritable(cmd: &str) -> bool {
-    rewrite_registry::is_rewritable_command(cmd)
+    is_rewritable_with_extras(
+        cmd,
+        &crate::core::config::Config::load().extra_rewrite_commands,
+    )
+}
+
+/// Pure rewritability check: built-in registry OR a user-configured extra command.
+/// `extra_rewrite_commands` (config) lets users route project-specific tools
+/// (mise, turbo, vitest, wrangler, …) through `lean-ctx -c` for compression without
+/// rebuilding. Additive; prefix/exact match on the command head.
+fn is_rewritable_with_extras(cmd: &str, extras: &[String]) -> bool {
+    if rewrite_registry::is_rewritable_command(cmd) {
+        return true;
+    }
+    extras.iter().any(|c| {
+        let c = c.trim();
+        !c.is_empty() && (cmd == c || cmd.starts_with(&format!("{c} ")))
+    })
 }
 
 /// True when `cmd` carries a top-level shell operator (`&&`, `||`, `;`, `|`),

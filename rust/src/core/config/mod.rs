@@ -541,6 +541,14 @@ pub struct Config {
     #[serde(default)]
     pub shell_allowlist_extra: Vec<String>,
 
+    /// Extra command names treated as rewritable by the PreToolUse hook, in
+    /// addition to the built-in REWRITE_COMMANDS registry. Lets users route
+    /// project-specific tools (e.g. `mise`, `turbo`, `vitest`, `wrangler`)
+    /// through `lean-ctx -c` for compression without rebuilding. Additive;
+    /// prefix/exact match on the command head.
+    #[serde(default)]
+    pub extra_rewrite_commands: Vec<String>,
+
     /// When true, block command substitution ($(), backticks) and process substitution
     /// (<(), >()) in shell arguments. When false (default), only warn via tracing.
     /// Default false preserves backward compatibility — set true for maximum security.
@@ -688,6 +696,7 @@ impl Default for Config {
             agent_token_budget: 0,
             shell_allowlist: default_shell_allowlist(),
             shell_allowlist_extra: Vec::new(),
+            extra_rewrite_commands: Vec::new(),
             shell_strict_mode: false,
             shell_security: None,
             shell_timeout_secs: None,
