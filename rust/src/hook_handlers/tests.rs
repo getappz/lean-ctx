@@ -663,6 +663,23 @@ fn rewrite_candidate_leaves_tricky_compound_untouched() {
 }
 
 #[test]
+fn extra_rewrite_commands_make_unregistered_command_rewritable() {
+    let extras = vec!["mise".to_string(), "turbo".to_string()];
+    // Not in the built-in registry on its own.
+    assert!(!is_rewritable_with_extras("mise run test", &[]));
+    // Becomes rewritable when configured (exact + prefix match).
+    assert!(is_rewritable_with_extras("turbo", &extras));
+    assert!(is_rewritable_with_extras("turbo build", &extras));
+    assert!(is_rewritable_with_extras("mise run test", &extras));
+    // Built-ins still match regardless of extras.
+    assert!(is_rewritable_with_extras("git status", &[]));
+    // Unrelated command stays non-rewritable.
+    assert!(!is_rewritable_with_extras("frobnicate", &extras));
+    // Blank entries are ignored (no accidental match-all).
+    assert!(!is_rewritable_with_extras("anything", &["   ".to_string()]));
+}
+
+#[test]
 fn extract_field_works() {
     let input = r#"{"tool_name":"Bash","command":"git status"}"#;
     assert_eq!(
