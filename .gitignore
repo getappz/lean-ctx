@@ -54,6 +54,11 @@ test-results/
 lean-ctx-report.html
 rust/lean-ctx-report.html
 *.bak
+*.bak-*
+*.log
+
+# ── Agent tooling / local config ──
+.agentvalve/
 
 # ── IDE local config (may contain tokens/env) ──
 **/.cursor/
@@ -67,6 +72,7 @@ rust/lean-ctx-report.html
 # ── Generated / worktrees (local) ──
 website/generated/
 worktrees/website/generated/
+.worktrees/
 AGENTS.md.lean-ctx.*.bak
 docs/gpt/
 
