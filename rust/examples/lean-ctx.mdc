@@ -21,7 +21,7 @@ Always use lean-ctx MCP tools. Never use the standard equivalents.
 
 - `full` — default, cached read (use for files you will edit)
 - `map` — dependency graph + exports + API signatures (use for context-only files)
-- `signatures` — API surface only (tree-sitter AST for 14 languages)
+- `signatures` — API surface only (tree-sitter AST for 26 languages)
 - `diff` — changed lines only (use after edits)
 - `aggressive` — syntax stripped
 - `entropy` — Shannon + Jaccard filtering

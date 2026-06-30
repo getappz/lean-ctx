@@ -3,9 +3,57 @@
 All notable changes to lean-ctx are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [3.8.16] — 2026-06-30
 
 ### Added
+- **Agent navigation upgrades for coding agents (#607–#611).** A cohesive set of
+  cross-turn navigation primitives that cut wasted re-discovery:
+  - **Stable symbol handles (#607).** Symbols carry a resolvable, cross-turn
+    handle (`path#name@Lline`); `ctx_search action=symbol handle=…` returns the
+    exact body deterministically, so an agent can re-open a symbol next turn
+    without re-searching.
+  - **Search hits tagged with their enclosing symbol (#608).** Every
+    `ctx_search` match now reports the function/class it lives in (plus that
+    symbol's handle), turning a bare line hit into navigable context.
+  - **Agent-loop taxonomy + navigation-paradox guidance (#609).** The canonical
+    rules (now v3) name the act→observe→navigate loop and warn against the
+    "more reads ≠ more understanding" paradox, surfaced as a compact per-turn
+    one-liner.
+  - **`signatures` coverage for 5 more languages (#610).** OCaml, Haskell,
+    Julia, Solidity and Nix gain tree-sitter signature extraction (−68 %…−90 %
+    tokens vs. full source) via statically linked grammars (no dynamic WASM).
+  - **Off-vs-on answer-quality testbench (#611).** `lean-ctx eval testbench`
+    measures answer quality, tokens, turns and walltime across pinned real
+    repos, with a deterministic recorded subset that gates CI and a
+    `FINDINGS.md` + regressions report.
+- **Codex ChatGPT-subscription proxy — durable, opt-in model-turn compression
+  (#603/#616/#621).** New `[proxy] codex_chatgpt_proxy` (env
+  `LEAN_CTX_CODEX_CHATGPT_PROXY`, default `false`). A ChatGPT-subscription login is
+  flat-rate, so the safe default leaves Codex talking directly to chatgpt.com —
+  history visible, `codex cloud`/remote intact, no #597. When you opt in, `lean-ctx`
+  setup pins the generated `leanctx-chatgpt` provider (`model_provider` +
+  `chatgpt_base_url` + a `[model_providers.leanctx-chatgpt]` block) so model turns
+  route through the proxy's `/backend-api/codex/responses` rail and get compressed;
+  every other `/backend-api/*` call (auth, cloud/remote, MCP) is forwarded
+  credential-preserving. Pinning a provider scopes Codex history to it (#597), so
+  routing is **opt-in** — you accept that trade only when you ask for it. On that
+  rail the proxy strips Codex's `X-OpenAI-Internal-Codex-Responses-Lite` marker so
+  chatgpt.com serves the full Responses stream every model needs (gpt-5.5 was
+  rejected in lite mode); single- and multi-turn `previous_response_id`
+  continuation verified (#623). `lean-ctx doctor` is opt-in-aware — the sanctioned
+  rail reads healthy, a half-written pair or an `openai_base_url`/backend-api
+  override stays flagged as a stale artifact to heal. Turn it on/off durably with
+  **`lean-ctx proxy codex-chatgpt on|off|status`**: it writes the opt-in straight
+  to `[proxy] codex_chatgpt_proxy` — the single source of truth the env-less managed
+  proxy, editor integrations and every later setup pass read (none inherit the
+  shell env, #449/#590) — then re-applies Codex's provider config immediately, with
+  clear feedback (and a heads-up when the proxy isn't running yet). Toggling back
+  off strips the entries and restores native history + cloud/remote. Exporting
+  `LEAN_CTX_CODEX_CHATGPT_PROXY` still works and is bridged to config on
+  `proxy enable`/`restart`. This closes the trap where a shell env opt-in never
+  reached the process that actually rewrote the Codex config. Builds on
+  @ousatov-ua's PRs #616/#621, gated behind the opt-in so non-routing users keep
+  full native history by default.
 - **Managed Connectors — hosted continuous source sync (#281).** The team server
   runs a scheduled, in-process sync of configured GitLab/GitHub sources into a
   workspace's BM25/graph/knowledge stores, so every seat's `ctx_semantic_search` /
@@ -215,6 +263,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Default off — the request is byte-identical until you opt in.
 
 ### Fixed
+- **Cline/Roo rules are MCP-first — dropped the stale `lean-ctx -c` prefix guidance
+  (GH #603).** `install_cline_rules` hardcoded a `.clinerules` body telling the agent
+  to prefix every shell command with `lean-ctx -c`, even though Cline/Roo get the
+  lean-ctx MCP server installed and the shell hook already wraps real terminal
+  commands — so the manual prefix re-wrapped an already-wrapped command, tripped the
+  re-entry passthrough and returned uncompressed output. The body now derives from
+  `core::rules_canonical` (the single source of truth) like every other dedicated
+  rule file: MCP-first (`ctx_*`), no `lean-ctx -c`, wrapped in the canonical markers
+  so `uninstall` can strip it (the old freeform header was not removable). Reported
+  by @ousatov-ua.
 - **lean-ctx no longer touches Codex under a ChatGPT subscription login (GH #597).**
   GH #568 pinned `model_provider = "leanctx-chatgpt"` (plus a
   `[model_providers.leanctx-chatgpt]` block) and `openai_base_url`/`chatgpt_base_url`

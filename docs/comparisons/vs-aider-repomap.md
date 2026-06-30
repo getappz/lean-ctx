@@ -29,7 +29,7 @@ The key distinction: Aider's repo-map is locked to Aider. lean-ctx's repo-map wo
 | Session-aware ranking | Recent files boosted, task context weighting | Chat files boosted |
 | Token budget control | `max_tokens` parameter (default 1024) | `--map-tokens` (default 1k) |
 | Binary search fitting | Yes | Yes |
-| Tree-sitter parsing | 21 languages | 40+ languages |
+| Tree-sitter parsing | 26 languages | 40+ languages |
 | Symbol extraction | Functions, classes, traits, structs | Functions, classes, methods |
 | Edge weighting | Proper casing +8, private x0.1, active session x50 | Frequency-based logarithmic |
 | Caching | mtime-based invalidation | Persistent cache |

@@ -77,7 +77,7 @@ All lean-ctx measurements are **real values** measured on the test repository. C
 | Call graph analysis | — | — | — | — | ✅ |
 | Repo map generation | — | ✅ | ✅ | — | ✅ |
 | Knowledge base | — | — | — | ✅ | ✅ |
-| Tree-sitter AST (18 langs) | — | ✅ | ✅ | — | ✅ |
+| Tree-sitter AST (26 langs) | — | ✅ | ✅ | — | ✅ |
 | MCP server | — | — | — | ✅ | ✅ |
 
 **lean-ctx feature count:** 23 operations across 81 MCP tools

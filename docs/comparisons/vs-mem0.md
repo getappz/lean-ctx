@@ -40,7 +40,7 @@ The distinction: Mem0 remembers that "the user prefers dark mode and lives in Be
 | File read compression | 10 modes (map, signatures, diff, ...) | No |
 | Cached re-reads | ~13 tokens | No |
 | Shell output compression | 95+ patterns | No |
-| Tree-sitter AST analysis | 21 languages | No |
+| Tree-sitter AST analysis | 26 languages | No |
 | Call graph | Multi-hop BFS + risk classification | No |
 | Blast radius / impact | ctx_impact (6 actions) | No |
 | Architecture overview | ctx_architecture (9 actions) | No |
