@@ -5,6 +5,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+- **Bundled addons now spawn with a scrubbed environment (addon env isolation).**
+  Every runnable registry addon (Headroom, Sophon, Repomix, Serena, …) now
+  declares a `[capabilities]` block. Its mere presence flips the single gateway
+  spawn point from the legacy "inherit the full host environment" path to the
+  scrubbed path (`env_clear` + base allowlist), so host API keys/tokens no longer
+  reach an untrusted addon child process. Network/filesystem grants are declared
+  honestly to match each tool's real needs (registry fetch, cache/index/vault
+  writes) — the empty env allowlist is the isolation win. A regression test
+  asserts every runnable bundled addon carries a capability block.
+
+### Added
+- **Portable OKF knowledge export/import** (`knowledge export --format okf` /
+  `knowledge import <dir>`, `ctx_knowledge`). Renders facts, patterns and typed
+  relations from one shared `KnowledgeSnapshot` to the vendor-neutral Open
+  Knowledge Format (git-diffable Markdown + YAML, relations as Markdown links) or
+  the signed `.ctxpkg` bundle. Round-trips byte-identically, accepts foreign OKF
+  bundles, and never leaves dangling relations. Fully local and free.
+- **Addon registry version-staleness check (`scripts/check-addon-versions.py`).**
+  Resolves every pinned upstream (PyPI / npm / NuGet / crates.io) against its
+  registry and reports drift as GitHub annotations. Wired into a dedicated,
+  non-blocking `Addon Registry Freshness` workflow (weekly + whenever the registry
+  changes) so a curated pin is never silently stale — and an upstream release
+  never breaks our own build.
+- **Cognee is now 1-click installable** (`addon add cognee`). It ships a published
+  MCP package (`cognee-mcp`) and runs fully local by default (SQLite + LanceDB +
+  Kuzu), so it fits the standard `uv tool install` bootstrap; the only runtime
+  requirement is an `LLM_API_KEY`, which is passed through via a reviewed
+  single-entry capability allowlist (all other host env stays scrubbed). The
+  remaining memory/graph listings (mem0, graphiti, zep, letta, claude-context)
+  stay directory-only because they need external infrastructure (a vector/graph
+  DB, or a managed account) that a one-command install cannot provision.
+
+### Changed
+- Refreshed bundled addon pins to current upstream: Headroom `0.27.0 → 0.28.0`,
+  Repomix `1.15.0 → 1.16.0`.
+
+### Fixed
+- **Enterprise/OS TLS roots are honored by every HTTP client (#643).** All ureq
+  clients are now built through `core::http_client`, which injects
+  `RootCerts::PlatformVerifier` so requests trust the system/enterprise trust store
+  instead of only the bundled WebPKI roots — fixing `UnknownIssuer` failures behind
+  TLS-intercepting corporate proxies (updates, version check, embeddings download,
+  Qdrant, Datadog/FinOps export, LLM enhance, SSO/billing, web fetch, webhooks).
+- **Shell hook is quiet by default (#646).** The activation notice (`lean-ctx: ON …`)
+  no longer prints on every new interactive terminal; mode-change notices now route
+  through a `_lean_ctx_notice` helper that speaks only when `LEAN_CTX_DEBUG=1` (and
+  stdout is a TTY). `lean-ctx-status` still reports the current state on demand.
+- **`doctor` recognizes its own running dashboard on port 3333 (#644).** The
+  dashboard port check reported a conflict whenever port 3333 was busy — even when
+  the occupant was lean-ctx's own dashboard. It now probes `/api/version` on bind
+  failure and reads the port as healthy only when the response is the dashboard's
+  own version JSON; unrelated services still surface the conflict. Implemented by
+  strengthening and reusing the dashboard's existing `dashboard_responding` probe,
+  so the browser-open guard and `doctor` share one source of truth.
+- **Native Read no longer breaks Claude Code's read-before-write guard (#637).**
+  The `PreToolUse` redirect hook rewrote a native `Read` to a temp `.lctx` copy, so
+  Claude Code's Write/Edit read-before-write guard tracked the temp path and a
+  follow-up native Write/Edit to the *real* file failed with "File has not been read
+  yet" — worst in headless `claude -p`, with no supported off-switch (the hook
+  self-healed back into `settings.json`). A new `read_redirect = auto | on | off`
+  key (env `LEAN_CTX_READ_REDIRECT`) now governs the Read redirect and is evaluated
+  per hook fire, so it also covers headless runs and never fights the self-heal. The
+  default `auto` disables only the Read path-swap on hosts carrying that guard —
+  Claude Code / CodeBuddy, detected inside the hook via the `CLAUDE_PROJECT_DIR`
+  marker Claude Code exports to every hook subprocess (`CLAUDECODE` / `CODEBUDDY` are
+  honored too) — so native Read → Write/Edit works out of the box; the `ctx_read` MCP
+  tool and the Grep/Glob redirects keep compressing. `on` restores always-redirect;
+  `off` disables the Read redirect everywhere.
+
 ## [3.8.18] — 2026-06-30
 
 ### Added

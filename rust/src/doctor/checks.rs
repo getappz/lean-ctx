@@ -410,12 +410,13 @@ pub(super) fn mcp_config_outcome() -> Outcome {
     };
 
     let locations = mcp_config_locations(&home);
+    let location_names = lean_ctx_mcp_location_names(&home);
     let mut found: Vec<String> = Vec::new();
     let mut exists_no_ref: Vec<String> = Vec::new();
 
     for loc in &locations {
-        if let Ok(content) = std::fs::read_to_string(&loc.path) {
-            if has_lean_ctx_mcp_entry(&content) {
+        if std::fs::read_to_string(&loc.path).is_ok() {
+            if location_names.contains(loc.name) {
                 found.push(format!("{} {DIM}({}){RST}", loc.name, loc.display));
             } else {
                 exists_no_ref.push(loc.name.to_string());
@@ -472,6 +473,15 @@ pub(super) fn port_3333_outcome() -> Outcome {
         Ok(_listener) => Outcome {
             ok: true,
             line: format!("{BOLD}Dashboard port 3333{RST}  {GREEN}available on 127.0.0.1{RST}"),
+        },
+        // #644: a busy port is only a problem if it's *not* us. Reuse the dashboard's
+        // own auth-aware /api/version probe (single source of truth) so our own
+        // running dashboard reads as healthy rather than a false conflict.
+        Err(_) if crate::dashboard::dashboard_responding("127.0.0.1", 3333) => Outcome {
+            ok: true,
+            line: format!(
+                "{BOLD}Dashboard port 3333{RST}  {GREEN}already serving lean-ctx dashboard{RST}  {DIM}(http://localhost:3333){RST}"
+            ),
         },
         Err(e) => Outcome {
             ok: false,
