@@ -59,6 +59,7 @@ GETTING STARTED:
 
 EVERYDAY COMMANDS:
     lean-ctx -c \"command\"          Run a shell command with compressed output
+    lean-ctx raw \"command\"         Same, but full uncompressed output (escape hatch)
     lean-ctx read <file>           Read a file with compression
     lean-ctx grep <pattern>        Search with compressed output
     lean-ctx dashboard             Open the web dashboard (localhost:3333)
@@ -110,6 +111,7 @@ USAGE:
     lean-ctx -t \"command\"          Track command (full output + stats, no compression)
     lean-ctx -c \"command\"          Execute with compressed output (used by AI hooks)
     lean-ctx -c --raw \"command\"    Execute without compression (full output)
+    lean-ctx raw \"command\"         Raw escape hatch: full, exact output (alias: bypass)
     lean-ctx exec \"command\"        Same as -c
     lean-ctx shell                 Interactive shell with compression
 
@@ -161,7 +163,7 @@ COMMANDS:
     daemon start|stop|restart|status  IPC daemon management
     daemon enable|disable          Auto-start daemon on login (systemd/LaunchAgent; prints service file)
     cache [list|clear|stats]       Show/manage file read cache
-    sessions [list|show|cleanup]   Manage saved session snapshots — PLURAL; see 'session' for live memory (alias: session-store)
+    sessions [list|show|delete|cleanup]  Manage saved session snapshots — PLURAL; see 'session' for live memory (alias: session-store)
     benchmark run [path] [--json]  Run real benchmark on project files
     benchmark report [path]        Generate shareable Markdown report
     benchmark compare [--output F] Head-to-head comparison vs competitors
@@ -313,6 +315,7 @@ EXAMPLES:
     lean-ctx savings verify-batch <file>  Verify a signed batch offline (no ledger needed)
     lean-ctx sessions list         List all CCP sessions
     lean-ctx sessions show         Show latest session state
+    lean-ctx sessions delete <id>  Delete one saved session
     lean-ctx discover              Find missed savings in shell history
     lean-ctx discover --card       Shareable 'before' SVG -> lean-ctx-before.svg
     lean-ctx onboard               One-command setup (shell + editors + verify)

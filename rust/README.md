@@ -216,6 +216,7 @@ lean-ctx wrapped               # Shareable savings report (CCP)
 lean-ctx wrapped --week        # Weekly savings report
 lean-ctx sessions list         # List CCP sessions
 lean-ctx sessions show <id>    # Show session details
+lean-ctx sessions delete <id>  # Delete one session
 lean-ctx sessions cleanup      # Remove old sessions
 lean-ctx benchmark run         # Real project benchmark (terminal)
 lean-ctx benchmark run --json  # Machine-readable JSON output
@@ -451,6 +452,7 @@ New in v2.0.0: CCP provides cross-session memory that persists across chats, con
 ```bash
 lean-ctx sessions list              # List all sessions
 lean-ctx sessions show <id>         # Show session details
+lean-ctx sessions delete <id>       # Delete one session
 lean-ctx sessions cleanup           # Remove old sessions
 lean-ctx wrapped                    # Shareable savings report
 lean-ctx wrapped --week             # Weekly report
@@ -553,8 +555,8 @@ lean-ctx init --agent codex
 This installs:
 
 - `~/.codex/AGENTS.md` + `~/.codex/LEAN-CTX.md`
-- a `SessionStart` hook that reminds Codex to prefer `lean-ctx -c "<command>"` for rewritable shell commands
-- a `PreToolUse` hook that blocks rewritable raw Bash commands and tells Codex exactly how to rerun them through `lean-ctx`
+- a `PreToolUse` hook that transparently rewrites rewritable Bash commands to `lean-ctx -c "<command>"` (allowed + `updatedInput`), so shell output is compressed with zero agent effort
+- a `SessionStart` hook that teaches Codex the raw escape hatch — `lean-ctx raw "<command>"` for the full, exact output — so it never re-reads a compressed view in small chunks
 
 ### Google Antigravity
 
@@ -727,7 +729,7 @@ Opens `http://localhost:3333` with:
 | **File reading** | `rtk read` (signatures mode) | **Modes: full (cached), map, signatures, diff, aggressive, entropy, lines:N-M** |
 | **File caching** | ✗ | ✓ MD5 session cache (re-reads = ~13 tokens) |
 | **Signature engine** | Line-by-line regex | **tree-sitter AST (26 languages)** |
-| **Dependency maps** | ✗ | ✓ import/export extraction (18 languages via tree-sitter) |
+| **Dependency maps** | ✗ | ✓ import/export extraction (26 languages via tree-sitter) |
 | **Context checkpoints** | ✗ | ✓ `ctx_compress` for long conversations |
 | **Token counting** | Estimated | tiktoken-exact (o200k_base) |
 | **Entropy analysis** | ✗ | ✓ Shannon entropy + Jaccard similarity |

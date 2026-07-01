@@ -714,6 +714,66 @@ fn raw_mode_returns_exact_file_content() {
     assert!(!output.contains("deps"), "raw mode must not contain deps");
 }
 
+/// Regression for GH #628: the verbatim views (`full`, `raw`, `lines:N-M`) must
+/// reproduce every source line — including decorative separator comments
+/// (`// ————`, `// ----`) — so the content the model edits never diverges from
+/// disk. The original report saw these silently stripped, which then broke
+/// `ctx_edit` on a whitespace mismatch.
+#[test]
+fn verbatim_modes_preserve_decorative_comment_lines() {
+    let _lock = crate::core::data_dir::test_env_lock();
+    let sep_em = "// ————————————————————————————————————————";
+    let sep_dash = "// ------------------------------------------";
+    let content = format!(
+        "import {{ describe, it, expect }} from \"vitest\";\n\
+         \n\
+         {sep_em}\n\
+         // Section: arithmetic\n\
+         {sep_em}\n\
+         describe(\"add\", () => {{\n  it(\"adds\", () => expect(1 + 1).toBe(2));\n}});\n\
+         \n\
+         {sep_dash}\n\
+         // Section: strings\n\
+         {sep_dash}\n"
+    );
+
+    for mode in ["full", "raw"] {
+        let (output, _) = render::process_mode(
+            &content,
+            mode,
+            "F1",
+            "math.test.ts",
+            "ts",
+            count_tokens(&content),
+            CrpMode::Off,
+            "/tmp/math.test.ts",
+            None,
+        );
+        assert!(
+            output.contains(sep_em) && output.contains(sep_dash),
+            "{mode} mode must keep every separator comment verbatim:\n{output}"
+        );
+        // Every source line is present (modes may add a header/footer, never drop).
+        for line in content.lines().filter(|l| !l.is_empty()) {
+            assert!(
+                output.contains(line),
+                "{mode} mode dropped a source line: {line:?}"
+            );
+        }
+    }
+
+    // A `lines:` window must keep separators too, with original line numbering.
+    let window = render::extract_line_range(&content, "1-5");
+    assert!(
+        window.contains(sep_em),
+        "lines: window dropped the separator comment:\n{window}"
+    );
+    assert!(
+        window.contains("   3| ") && window.contains("   5| "),
+        "lines: window must number the separator lines (3 and 5):\n{window}"
+    );
+}
+
 /// Determinism contract (#498): tool output must be a pure function of
 /// (content, mode, crp_mode, task). Timestamps, counters or random hints in
 /// the body would make otherwise-identical outputs unique and defeat
@@ -770,6 +830,60 @@ fn process_mode_output_is_byte_stable_across_calls() {
             "mode '{mode}' produced non-deterministic output"
         );
     }
+}
+
+/// The reactive recovery footer (#premium-recovery): present on compressed views,
+/// leading with the MCP-free native path; absent from verbatim views and when the
+/// `recovery_hints` tier is `off`; and byte-stable across calls (#498).
+#[test]
+fn recovery_footer_is_compressed_only_and_togglable() {
+    // `isolated_data_dir()` already holds `test_env_lock` for its lifetime; taking
+    // the lock again here would self-deadlock (the mutex is non-reentrant).
+    let _iso = crate::core::data_dir::isolated_data_dir();
+    let content: String = (0..120)
+        .map(|i| format!("pub fn handler_{i}(x: u32) -> u32 {{ x * {i} }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tokens = count_tokens(&content);
+    let run = |mode: &str| {
+        render::process_mode(
+            &content,
+            mode,
+            "F1",
+            "rec.rs",
+            "rs",
+            tokens,
+            CrpMode::Off,
+            "/tmp/rec.rs",
+            None,
+        )
+        .0
+    };
+
+    // Default tier (minimal): a compressed view leads its footer with the native,
+    // MCP-free path so an agent needing the full source never reads line-by-line.
+    crate::test_env::set_var("LEAN_CTX_RECOVERY_HINTS", "minimal");
+    let sigs = run("signatures");
+    assert!(
+        sigs.contains("read \"/tmp/rec.rs\" directly (no MCP)"),
+        "compressed view must surface the MCP-free recovery path: {sigs}"
+    );
+    // Determinism (#498): byte-stable across calls.
+    assert_eq!(sigs, run("signatures"), "footer must be byte-stable");
+
+    // The verbatim escape hatch itself carries no footer (nothing to recover).
+    assert!(
+        !run("raw").contains("(no MCP)"),
+        "raw view needs no recovery footer"
+    );
+
+    // The off switch suppresses the footer cleanly.
+    crate::test_env::set_var("LEAN_CTX_RECOVERY_HINTS", "off");
+    assert!(
+        !run("signatures").contains("(no MCP)"),
+        "recovery_hints=off must drop the footer"
+    );
+    crate::test_env::remove_var("LEAN_CTX_RECOVERY_HINTS");
 }
 
 #[test]

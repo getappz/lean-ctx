@@ -3,6 +3,120 @@
 All notable changes to lean-ctx are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+## [3.8.18] — 2026-06-30
+
+### Added
+- **Compressed output is now visibly reversible — a first-class recovery layer on
+  every surface (#625).** Agents (Codex especially) were re-reading compressed
+  views line-by-line because nothing taught them how to get the raw bytes back —
+  the real cause behind "too compressed" reports. The escape hatch already
+  existed; it is now *discoverable* and *consistent*, with the non-MCP path
+  treated as first-class (many orgs forbid MCP):
+  - **Proactive (MCP rules v4).** A new `RECOVER` rule states the invariant —
+    compressed output is reversible, never re-read it line-by-line — and names the
+    recovery grammar: read the shown file path with any tool (no MCP), or
+    `ctx_read(mode=full|raw=true)`; `[Archived]`/tee/firewall handles →
+    `ctx_expand(id=…)`.
+  - **Reactive (ctx_read footer).** Every lossy `ctx_read` view ends with a
+    recovery footer that leads with the native file path, then the MCP fallbacks;
+    `full`/`raw` views carry no footer (deduped by mode). `ctx_read` gained an
+    explicit `raw` parameter (verbatim bytes, unframed escape hatch).
+  - **CLI / shell-hook surface.** `lean-ctx raw "<command>"` is now surfaced in
+    `help`, `help all` and the cheatsheet, so the raw path is reachable without
+    MCP.
+  - **Guaranteed raw on disk.** The default `tee_mode` is now `high-compression`:
+    whenever a view compresses heavily a verbatim copy is one `ctx_expand`/file
+    read away. The new `recovery_hints` config (`off|minimal|full`) tunes footer
+    verbosity. All recovery grammar (archive, firewall, spill, tee, ctx_shell)
+    flows through one `recovery` module, so every channel speaks the same
+    non-MCP-first sentence.
+
+### Fixed
+- **Source reads are no longer silently stripped of decorative separator comments,
+  which had broken follow-up edits (#628).** A file read carries lossless-only
+  intent — the model edits exactly what it sees — so the proxy never lossy-
+  compresses a recognized file read. The safety net for reads routed through an
+  *unrecognized* tool (the content heuristic) under-counted real source, though: a
+  decorative separator comment (`// ————`, `// ----`) and the call-shaped
+  scaffolding of a test file (`describe(…) {`, `});`) scored as non-code, so a
+  genuine `.test.ts` could be compressed on the wire and lose those separator
+  lines — after which `ctx_edit` failed on a whitespace mismatch against the
+  on-disk file. The heuristic now treats comment lines as neutral (they never
+  dilute the code ratio) and recognizes top-level call/closer shapes as code, so
+  real source is protected regardless of the originating tool. Regression tests
+  pin the verbatim `ctx_read` modes (`full`/`raw`/`lines:N-M`) to reproduce every
+  source line, including decorative comments.
+- **The Codex `lean-ctx -c` SessionStart hook is no longer a redundant nag (#625).**
+  Codex's `PreToolUse` hook already rewrites every rewritable Bash command to
+  `lean-ctx -c "<command>"` transparently (`permissionDecision: allow` +
+  `updatedInput`), so the old SessionStart line ("prefer `lean-ctx -c`") taught
+  nothing actionable — and crucially said nothing about getting *raw* output,
+  which is the one thing an agent cannot reach once a command is auto-compressed.
+  The hint now teaches the raw escape (`lean-ctx raw "<command>"`) and forbids the
+  small-chunk re-read anti-pattern. The raw spellings (`lean-ctx raw`,
+  `lean-ctx -c --raw`) are reentrance-safe: the rewrite hook leaves any command
+  starting with `lean-ctx ` untouched, so the agent always reaches verbatim bytes.
+- **`ctx_shell` now surfaces when a requested `cwd` was rejected by the project-root
+  jail (#629).** A `cwd` resolving outside the session's `project_root` is rejected
+  by the path jail and silently replaced with the project root — correct sandboxing
+  (it stops MCP clients escaping the workspace), but the *silent* fallback made the
+  parameter look ignored: a caller running `pwd && ls` in what they thought was dir
+  A actually ran in the root with no indication why. The jail is untouched;
+  `effective_cwd_checked` now returns the rejection reason and `ctx_shell` appends a
+  one-line `[cwd: …]` hint naming the reason and the directory it ran in instead.
+  Thanks to @mahmoudps for the report and the original patch (#630).
+- **`ctx_search` no longer returns a false `No matches` for content edited after
+  the index warmed (#624).** The resident trigram index treated itself as *fresh*
+  for a fixed 15 s TTL with no per-file change detection, so in hybrid setups
+  where edits are applied natively a freshly edited or created file was invisible
+  to trigram narrowing — for a word-literal query a missing trigram made the
+  candidate set provably empty, yielding `0 matches` even though the text was on
+  disk (and `get_fresh` even served a stale index past the TTL, so results
+  flipped between hits and misses depending on timing). Index freshness is now a
+  function of *corpus state*, not the clock: the build records a cheap,
+  order-independent signature over the eligible files' `(path, mtime, size)`, and
+  every lookup re-derives it via a stat-only walk that shares the build's exact
+  filter path — the resident index is served only when the signature matches the
+  live filesystem, otherwise lean-ctx walks accurately for that call and rebuilds
+  the index in the background. The optional `LEAN_CTX_SEARCH_INDEX_COALESCE_MS`
+  (default `0` = always verify) coalesces the stat-walk under bursty load on very
+  large indexed trees. `ctx_read` was never affected (it is mtime + MD5 verified).
+- **No-auth dashboard no longer 403s behind a port-remapped Docker publish (#623).** In
+  no-auth mode every `/api/*` request is gated on a `Host` allowlist built from the
+  *bound* port. When a container binds `0.0.0.0:3333` but Docker publishes it on a
+  different host port (`-p 60000:3333`), the browser reaches `127.0.0.1:60000` and
+  sends `Host: 127.0.0.1:60000` — the *published* port, which the bind-port
+  allowlist (`127.0.0.1:3333`) rejected, so every API call returned 403 and the
+  dashboard's cards failed to load. The gate now accepts any **loopback** host
+  (`127.0.0.0/8`, `localhost`, `::1`) on **any port**: a loopback `Host` can't be a
+  DNS-rebinding target, so this is safe, and cross-origin/CSRF is still blocked by
+  the `Sec-Fetch-Site`/`Origin` checks. Port-remapped loopback publishes now work
+  out of the box without `LEAN_CTX_DASHBOARD_ALLOWED_HOSTS`.
+
+## [3.8.17] — 2026-06-30
+
+### Fixed
+- **Codex Desktop remote-control pairing now works with the ChatGPT-subscription
+  opt-in (#597).** When `[proxy] codex_chatgpt_proxy` routes Codex through the
+  proxy, `chatgpt_base_url` points every `/backend-api/*` call at lean-ctx —
+  including Codex Desktop's remote-control pairing, which opens a **WebSocket** to
+  chatgpt.com. The `/backend-api` handler only spoke HTTP/SSE (it even stripped the
+  `Upgrade`/`Connection` headers), so the pairing handshake never completed and
+  remote control stayed broken. The proxy now detects a WebSocket upgrade on
+  `/backend-api` and tunnels it verbatim through to `wss://chatgpt.com`, replaying
+  the client's auth plus the shared Cloudflare clearance and relaying every frame
+  in both directions. Opening that `wss://` socket needs a process-default rustls
+  `CryptoProvider`; because the dependency tree pulls **both** aws-lc-rs (reqwest)
+  and ring (lettre/ureq), `tokio-tungstenite` couldn't auto-pick one and the TLS
+  handshake aborted — so the proxy now installs aws-lc-rs (reqwest's provider) at
+  startup. Model-turn compression on `/backend-api/codex/responses` is unchanged,
+  and the default native ChatGPT path (opt-in off) was never affected.
+  Verified end-to-end against the live ChatGPT backend: the remote-control enroll
+  + WebSocket now reach chatgpt.com identically whether Codex connects directly or
+  through the proxy (the proxy is fully transparent).
+
 ## [3.8.16] — 2026-06-30
 
 ### Added
