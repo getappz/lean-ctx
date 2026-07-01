@@ -151,7 +151,8 @@ pub(super) fn cmd_dev_install() {
         }
     }
 
-    let built_binary = cargo_root.join("target/release/lean-ctx");
+    let exe_name = format!("lean-ctx{}", std::env::consts::EXE_SUFFIX);
+    let built_binary = cargo_root.join("target/release").join(&exe_name);
     if !built_binary.exists() {
         eprintln!(
             "  Error: Built binary not found at {}",
@@ -349,13 +350,17 @@ pub(super) fn resolve_install_path() -> std::path::PathBuf {
     }
 
     if let Ok(home) = std::env::var("HOME") {
-        let local_bin = std::path::PathBuf::from(&home).join(".local/bin/lean-ctx");
+        let exe_name = format!("lean-ctx{}", std::env::consts::EXE_SUFFIX);
+        let local_bin = std::path::PathBuf::from(&home).join(".local/bin").join(&exe_name);
         if local_bin.parent().is_some_and(std::path::Path::exists) {
             return local_bin;
         }
     }
 
-    std::path::PathBuf::from("/usr/local/bin/lean-ctx")
+    std::path::PathBuf::from(format!(
+        "/usr/local/bin/lean-ctx{}",
+        std::env::consts::EXE_SUFFIX
+    ))
 }
 
 /// Returns true if a symlink target points into a Homebrew Cellar / linuxbrew
