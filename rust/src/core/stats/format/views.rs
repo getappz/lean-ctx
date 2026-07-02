@@ -3,7 +3,7 @@
 use super::util::{active_theme, day_total_saved, format_big, format_num, usd_estimate};
 use crate::core::theme;
 
-use super::super::model::CostModel;
+use super::super::model::{CostModel, DayStats};
 
 /// Renders a 30-day token savings bar chart with sparkline.
 pub fn format_gain_graph() -> String {
@@ -90,17 +90,46 @@ pub fn format_gain_graph() -> String {
 }
 
 /// Renders a daily breakdown table of token savings with totals.
-#[allow(clippy::many_single_char_names)]
 pub fn format_gain_daily() -> String {
+    format_gain_daily_impl(None)
+}
+
+/// Renders a single day's savings as a compact box, or a "no data" message
+/// when `date` (already resolved to `YYYY-MM-DD`) has no recorded stats.
+/// Reuses the `--daily` table renderer with a one-row filter (#gain-deep-date) —
+/// the task/cost/agent/heatmap sections in `--deep` stay all-time since those
+/// stores don't carry per-day breakdowns.
+pub fn format_gain_day(date: &str) -> String {
+    format_gain_daily_impl(Some(date))
+}
+
+#[allow(clippy::many_single_char_names)]
+fn format_gain_daily_impl(date_filter: Option<&str>) -> String {
     let theme = active_theme();
     let store = crate::core::stats::load();
     let rst = theme::rst();
     let bold = theme::bold();
     let dim = theme::dim();
 
-    if store.daily.is_empty() {
+    let days: Vec<DayStats> = if let Some(d) = date_filter {
+        match store.daily.iter().find(|day| day.date == d) {
+            Some(day) => vec![day.clone()],
+            None => return format!("{dim}No data recorded for {d}.{rst}"),
+        }
+    } else if store.daily.is_empty() {
         return format!("{dim}No daily data yet.{rst}");
-    }
+    } else {
+        store
+            .daily
+            .iter()
+            .rev()
+            .take(30)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .cloned()
+            .collect()
+    };
 
     let mut out = Vec::new();
     let w = 76;
@@ -112,10 +141,14 @@ pub fn format_gain_daily() -> String {
     };
 
     out.push(String::new());
+    let title = match date_filter {
+        Some(d) => format!("Day: {d}"),
+        None => "Daily Breakdown".to_string(),
+    };
     out.push(format!(
-        "  {icon} {title}  {dim}Daily Breakdown{rst}",
+        "  {icon} {title2}  {dim}{title}{rst}",
         icon = theme.header_icon(),
-        title = theme.brand_title(),
+        title2 = theme.brand_title(),
     ));
     out.push(format!("  {}", theme.box_top(w)));
     let hdr = format!(
@@ -131,17 +164,6 @@ pub fn format_gain_daily() -> String {
     );
     out.push(daily_box(&hdr));
     out.push(format!("  {}", theme.box_mid(w)));
-
-    let days: Vec<_> = store
-        .daily
-        .iter()
-        .rev()
-        .take(30)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .cloned()
-        .collect();
 
     let cm = CostModel::default();
     for day in &days {
@@ -171,6 +193,14 @@ pub fn format_gain_daily() -> String {
             m = theme.muted.fg(),
         );
         out.push(daily_box(&row));
+    }
+
+    // A single-day view (`--deep --date=...`) is redundant against its own TOTAL
+    // row and a one-point trend line — skip both, just close the box.
+    if date_filter.is_some() {
+        out.push(format!("  {}", theme.box_bottom(w)));
+        out.push(String::new());
+        return out.join("\n");
     }
 
     let total_input: u64 = store.daily.iter().map(|day| day.input_tokens).sum();

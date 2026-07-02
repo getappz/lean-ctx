@@ -56,6 +56,16 @@ pub(in crate::cli::dispatch) fn cmd_gain(rest: &[String]) {
     let copy = rest.iter().any(|a| a == "--copy");
     let open = rest.iter().any(|a| a == "--open");
 
+    let date_arg = rest.iter().enumerate().find_map(|(i, a)| {
+        if let Some(v) = a.strip_prefix("--date=") {
+            return Some(v.to_string());
+        }
+        if a == "--date" {
+            return rest.get(i + 1).cloned();
+        }
+        None
+    });
+
     if let Some(req) = unpublish_request(rest) {
         let id = match &req {
             UnpublishReq::Id(s) => Some(s.as_str()),
@@ -205,14 +215,7 @@ pub(in crate::cli::dispatch) fn cmd_gain(rest: &[String]) {
             println!("No pipeline stats available yet. Use MCP tools to generate data.");
         }
     } else if rest.iter().any(|a| a == "--deep") {
-        // Body first, then the extra themed sections, then the footer — so the
-        // tips / Context OS panel land at the very end instead of mid-dashboard.
-        println!("{}", core::stats::format_gain_body());
-        print!(
-            "{}",
-            tools::ctx_gain::format_deep_themed(model.as_deref(), limit)
-        );
-        println!("{}", core::stats::format_gain_footer());
+        cmd_gain_deep(date_arg.as_deref(), model.as_deref(), limit);
     } else if rest.iter().any(|a| a == "--opportunity") {
         cmd_opportunity();
     } else if rest.iter().any(|a| a == "--raw") {
@@ -486,6 +489,46 @@ fn share_side_effects(
     }
 }
 
+/// `gain --deep [--date=<today|yesterday|YYYY-MM-DD>]`. Body first, then the
+/// extra themed sections, then the footer — so the tips / Context OS panel
+/// land at the very end instead of mid-dashboard.
+fn cmd_gain_deep(date_arg: Option<&str>, model: Option<&str>, limit: usize) {
+    let Some(raw_date) = date_arg else {
+        println!("{}", core::stats::format_gain_body());
+        print!("{}", tools::ctx_gain::format_deep_themed(model, limit));
+        println!("{}", core::stats::format_gain_footer());
+        return;
+    };
+    let date = match resolve_gain_date(raw_date) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+    println!("{}", core::stats::format_gain_day(&date));
+    println!(
+        "  \x1b[2m(task/cost/agent/heatmap sections below are all-time — no per-day breakdown is tracked for them yet)\x1b[0m"
+    );
+    print!("{}", tools::ctx_gain::format_deep_themed(model, limit));
+    println!("{}", core::stats::format_gain_footer());
+}
+
+/// Resolves `--date`'s value to a `YYYY-MM-DD` string. Accepts the aliases
+/// `today` / `yesterday` (local time, matching how `DayStats::date` is
+/// stamped in `core::stats::record`) or an explicit ISO date.
+fn resolve_gain_date(raw: &str) -> Result<String, String> {
+    match raw {
+        "today" => Ok(chrono::Local::now().format("%Y-%m-%d").to_string()),
+        "yesterday" => Ok((chrono::Local::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string()),
+        _ => chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+            .map(|_| raw.to_string())
+            .map_err(|_| format!("Invalid --date '{raw}' — use today, yesterday, or YYYY-MM-DD.")),
+    }
+}
+
 /// `gain --opportunity` — merged discover + ghost (opportunity report).
 fn cmd_opportunity() {
     use crate::core::theme;
@@ -600,7 +643,7 @@ fn cmd_stats_raw(rest: &[String]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{base_url_arg, share_target, svg_target};
+    use super::{base_url_arg, resolve_gain_date, share_target, svg_target};
 
     fn args(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|s| (*s).to_string()).collect()
@@ -676,5 +719,21 @@ mod tests {
             Some("https://me.dev")
         );
         assert_eq!(base_url_arg(&args(&["--share"])), None);
+    }
+
+    #[test]
+    fn resolve_gain_date_accepts_aliases_and_iso() {
+        assert!(resolve_gain_date("today").is_ok());
+        assert!(resolve_gain_date("yesterday").is_ok());
+        assert_eq!(
+            resolve_gain_date("2026-07-01"),
+            Ok("2026-07-01".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_gain_date_rejects_garbage() {
+        assert!(resolve_gain_date("not-a-date").is_err());
+        assert!(resolve_gain_date("07/01/2026").is_err());
     }
 }
