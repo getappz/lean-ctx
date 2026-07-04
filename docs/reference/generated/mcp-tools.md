@@ -382,6 +382,9 @@ ANTI-PATTERN: not for single-repo projects — use ctx_search.
 Actions: add_root|remove_root|list_roots|search|status|save_config.
 Cross-repo search runs hybrid retrieval per root (BM25+dense+SPLADE)
 and merges with RRF; mode="bm25" forces lexical-only.
+ctx_search/ctx_glob/ctx_tree/ctx_read all accept a repo=<alias>
+arg (not in their own schema) to target a registered root by
+alias instead of the project root — list_roots shows the aliases.
 
 Parameters: `action`*, `alias`, `max_results`, `mode`, `path`, `query`, `roots`
 
@@ -389,7 +392,7 @@ Parameters: `action`*, `alias`, `max_results`, `mode`, `path`, `query`, `roots`
 
 WORKFLOW: call BEFORE ctx_read to map code structure (a syntax-aware table of contents).
 Accepts a FILE or a DIRECTORY (folder surface — per-file symbols). Symbols come from
-tree-sitter (26 languages, real line spans); a conservative regex fallback covers the rest.
+tree-sitter (27 languages, real line spans); a conservative regex fallback covers the rest.
 kind=fn|struct|class|trait|enum|impl|all filters by kind; match=<substr> filters by name
 (case-insensitive); format=json emits deterministic JSON labelling the backend per file.
 ANTIPATTERN: NOT for file content (use ctx_read) or deep understanding (use ctx_compose).
@@ -629,7 +632,7 @@ raw=true for verbatim output.
 [exit:N] on errors (lossless).
 ANTIPATTERN: multi-line scripts → ctx_execute.
 
-Parameters: `command`*, `cwd`, `env`, `raw`
+Parameters: `command`*, `cwd`, `env`, `raw`, `timeout_ms`
 
 ## `ctx_skillify`
 

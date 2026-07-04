@@ -17,8 +17,18 @@
 //! Adding a language therefore means: a pinned optional dep in `Cargo.toml`
 //! under the `tree-sitter` feature, a `get_language`/`get_query` arm here, a
 //! `QUERY_*` const, and tests in `signatures_ts`.
+//!
+//! **One deliberate exception (#690):** long-tail grammars behind an
+//! installed, SHA-256-pinned addon dylib. `get_language`'s final `_` arm
+//! defers to [`super::grammar_loader::get_addon_language`] before giving up
+//! — see that module's doc comment for how this narrows the three objections
+//! above rather than abandoning them. `get_query`'s arms are unaffected:
+//! query text for those languages stays a bundled `&'static str` here either
+//! way, addon or not.
 
 use tree_sitter::Language;
+
+use super::grammar_loader::get_addon_language;
 
 const QUERY_RUST: &str = r"
 (function_item name: (identifier) @name) @def
@@ -294,6 +304,18 @@ const QUERY_NIX: &str = r"
 (binding attrpath: (attrpath) @name expression: (function_expression)) @def
 ";
 
+/// Queries [tree-sitter-powershell](https://crates.io/crates/tree-sitter-powershell)
+/// (airbus-cert grammar). Names are carried by child nodes (`function_name`,
+/// `simple_name`), not named fields. `(A (B) @name)` matches direct children
+/// only, so enum members (wrapped in their own nodes) and method parameters
+/// (`variable` nodes) never leak into the capture.
+const QUERY_POWERSHELL: &str = r"
+(function_statement (function_name) @name) @def
+(class_statement (simple_name) @name) @def
+(class_method_definition (simple_name) @name) @def
+(enum_statement (simple_name) @name) @def
+";
+
 pub(super) fn get_language(ext: &str) -> Option<Language> {
     Some(match ext {
         "rs" => tree_sitter_rust::LANGUAGE.into(),
@@ -324,7 +346,8 @@ pub(super) fn get_language(ext: &str) -> Option<Language> {
         "jl" => tree_sitter_julia::LANGUAGE.into(),
         "sol" => tree_sitter_solidity::LANGUAGE.into(),
         "nix" => tree_sitter_nix::LANGUAGE.into(),
-        _ => return None,
+        "ps1" | "psm1" => tree_sitter_powershell::LANGUAGE.into(),
+        _ => return get_addon_language(ext),
     })
 }
 
@@ -357,6 +380,7 @@ pub(super) fn get_query(ext: &str) -> Option<&'static str> {
         "jl" => QUERY_JULIA,
         "sol" => QUERY_SOLIDITY,
         "nix" => QUERY_NIX,
+        "ps1" | "psm1" => QUERY_POWERSHELL,
         _ => return None,
     })
 }

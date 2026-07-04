@@ -86,6 +86,17 @@ pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
         }
     };
 
+    // Personal usage view (enterprise#64): give `/me` on the proxy port its
+    // read path into the store. Without a store the endpoint answers 503 with
+    // an actionable error — never a broken page.
+    if let Some(pool) = pool.clone() {
+        super::user_api::install_pool(pool);
+        println!(
+            "  Me-View:   http://<gateway-host>:{}/me — personal usage, sign in with your own gateway key",
+            opts.port
+        );
+    }
+
     // -- Admin listener (dashboard + admin API + /metrics, #20/#34/#45) -----
     match (pool.clone(), admin_token()) {
         (Some(pool), Some(token)) => {
@@ -96,6 +107,7 @@ pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
                 started_at: std::time::Instant::now(),
                 providers: super::admin_status::provider_statuses(&cfg.proxy.resolve_providers()),
                 routing_enabled: cfg.proxy.routing.is_active(),
+                routing_aliases: cfg.proxy.routing.aliases.clone(),
                 reference_model: cfg.proxy.baseline.reference_model.clone(),
                 local_shadow_rate: cfg.proxy.baseline.effective_local_shadow_rate(),
             };
@@ -132,6 +144,56 @@ pub async fn serve(opts: ServeOptions) -> anyhow::Result<()> {
         (None, _) => {
             println!("  Admin:     off — requires the usage store ({DATABASE_URL_ENV})");
         }
+    }
+
+    // -- Budget seeding (enterprise#25) --------------------------------------
+    // With a store present, periodically replace the in-memory budget windows
+    // with authoritative sums from usage_events so caps survive restarts and
+    // hold across replicas. Fail-open: a failed query keeps the last seed +
+    // live in-process counting.
+    if let Some(pool) = pool.clone() {
+        tokio::spawn(async move {
+            loop {
+                match super::store::budget_window_sums(&pool).await {
+                    Ok((person_day, project_month)) => {
+                        crate::proxy::policy_gate::seed_from_store(person_day, project_month);
+                    }
+                    Err(e) => {
+                        tracing::debug!("budget seed skipped (store unreachable): {e:#}");
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+    }
+
+    // -- Usage retention (enterprise#36) --------------------------------------
+    // [gateway_server].usage_retention_days > 0 purges older rows periodically.
+    // Unset/0 keeps everything — retention is an explicit deployment decision.
+    let retention_days = crate::core::config::Config::load()
+        .gateway_server
+        .usage_retention_days
+        .unwrap_or(0);
+    if retention_days > 0
+        && let Some(pool) = pool.clone()
+    {
+        println!("  Retention: usage_events kept {retention_days} days (purge every 6h)");
+        tokio::spawn(async move {
+            loop {
+                match super::store::purge_events_older_than(&pool, retention_days).await {
+                    Ok(0) => {}
+                    Ok(purged) => {
+                        tracing::info!(
+                            "usage retention: purged {purged} events older than {retention_days} days"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!("usage retention purge skipped: {e:#}");
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_hours(6)).await;
+            }
+        });
     }
 
     // -- Proxy (blocking; the actual gateway surface) ------------------------
@@ -343,6 +405,26 @@ fn render_metrics(out: &mut String) {
         out,
         "# HELP leanctx_usage_events_dropped_total Usage events dropped because the store writer was saturated (fail-open).\n# TYPE leanctx_usage_events_dropped_total counter\nleanctx_usage_events_dropped_total {}",
         crate::proxy::usage_sink::dropped_count()
+    );
+
+    // Org-policy gate (enterprise#25, #66): blocked-request counters.
+    let (blocked_model, blocked_budget, blocked_rate) =
+        crate::proxy::policy_gate::blocked_counters();
+    let _ = writeln!(
+        out,
+        "# HELP leanctx_policy_blocked_total Requests refused by the enforced org policy.\n# TYPE leanctx_policy_blocked_total counter"
+    );
+    let _ = writeln!(
+        out,
+        "leanctx_policy_blocked_total{{reason=\"model_ceiling\"}} {blocked_model}"
+    );
+    let _ = writeln!(
+        out,
+        "leanctx_policy_blocked_total{{reason=\"budget\"}} {blocked_budget}"
+    );
+    let _ = writeln!(
+        out,
+        "leanctx_policy_blocked_total{{reason=\"rate_limit\"}} {blocked_rate}"
     );
 }
 

@@ -45,7 +45,7 @@ impl McpTool for CtxReadTool {
                     "paths": { "type": "array", "items": { "type": "string" }, "description": "Batch read" },
                     "mode": {
                         "type": "string",
-                        "description": "REQUIRED. full=verbatim(edit-ready) anchored=full+N:hh|anchors(edit via ctx_patch) raw=exact-bytes signatures=API map=structure auto=smart diff=git-delta lines:N-M=window reference=quotes task=focus"
+                        "description": "REQUIRED. full=verbatim(edit-ready) anchored=full+N:hh|anchors(edit via ctx_patch) raw=exact-bytes signatures=API map=structure auto=smart diff=git-delta lines:N-M=window (comma multi-selects: lines:5,10-20) reference=quotes task=focus"
                     },
                     "raw": { "type": "boolean", "description": "Verbatim (= mode=raw + fresh)" },
                     "start_line": { "type": "integer", "description": "1-based" },
@@ -75,7 +75,25 @@ impl McpTool for CtxReadTool {
             return super::ctx_multi_read::batch_read(args, ctx);
         }
 
-        let path = require_resolved_path(ctx, args, "path")?;
+        let path = if let Some(repo) = get_str(args, "repo") {
+            let root = crate::core::multi_repo::resolve_repo_root(&repo).ok_or_else(|| {
+                let known = crate::core::multi_repo::known_aliases().join(", ");
+                let known = if known.is_empty() {
+                    "none registered — use ctx_multi_repo add_root".to_string()
+                } else {
+                    known
+                };
+                ErrorData::invalid_params(
+                    format!("unknown repo alias: {repo} (known: {known})"),
+                    None,
+                )
+            })?;
+            let rel = get_str(args, "path").unwrap_or_else(|| ".".to_string());
+            crate::core::path_resolve::resolve_tool_path(Some(&root), None, &rel)
+                .map_err(|e| ErrorData::invalid_params(e, None))?
+        } else {
+            require_resolved_path(ctx, args, "path")?
+        };
 
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.handle_inner(args, ctx, &path)
@@ -1400,3 +1418,9 @@ mod tests {
         assert!(degraded);
     }
 }
+
+// #660 LOC gate: repo-param tests split out to keep this file under the line
+// cap — see `ctx_read_repo_param_tests.rs`.
+#[cfg(test)]
+#[path = "ctx_read_repo_param_tests.rs"]
+mod repo_param_tests;
