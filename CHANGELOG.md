@@ -5,7 +5,221 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **The shell hook is now transparent in plain human terminals: default
+  activation is `agents-only` (GH #699).** With the old `always` default the
+  hook aliased git/docker/kubectl in every interactive shell — so a human in
+  a plain terminal (no agent anywhere) saw lean-ctx allowlist diagnostics for
+  their own commands. lean-ctx exists to save *agent* tokens; the aliases now
+  auto-activate only when an agent session is detected (`LEAN_CTX_AGENT`,
+  `CURSOR_AGENT` — newly recognized across every guard — `CLAUDECODE`,
+  `CODEBUDDY`, `CODEX_CLI_SESSION`, `GEMINI_SESSION`). Set
+  `shell_activation = "always"` (or `LEAN_CTX_SHELL_ACTIVATION=always`) to
+  keep the old behavior, e.g. to feed your own shell usage into
+  `lean-ctx wrapped`; `lean-ctx-on` still opts a single session in manually.
+  The "[CLI] Command would be blocked in MCP mode" allowlist diagnostic is
+  also downgraded to debug level for interactive TTY callers — it's agent
+  telemetry, not human feedback. Thanks @DerPate for the precise report.
+
+### Added
+- **Persistent per-extension grammar telemetry (GH #690 Phase 2 groundwork).**
+  The tiering cut needs to know which of the ~27 static tree-sitter grammars
+  actually earn their binary bytes, but the only signal was a pair of
+  process-lifetime counters with no language dimension (flagged by @getappz).
+  `core/grammar_usage` now records tree-sitter vs regex-fallback hits per file
+  extension, persisted across sessions in `grammar_usage.json` (aggregate
+  counters only — no paths or project data). `ctx_metrics` shows the all-time
+  top extensions in its SIGNATURE BACKEND section.
+
 ### Fixed
+- **Grammar-addon dylibs refuse to load from world-writable dirs/files
+  (GH #690 review point 3, PR #697 — thanks @getappz).** A group/other-
+  writable grammar dir would let any local account swap the dylib between
+  hash check and `dlopen`; the loader now rejects that layout outright.
+- **`ctx_read` gains `repo` param parity in multi-repo mode (GH #696,
+  PR #698 — thanks @getappz).** `ctx_search`/`ctx_glob`/`ctx_tree` could
+  already target a registered root via `repo=<alias>`, but `ctx_read` could
+  not — you could find a file in another root yet not read it. Read-only by
+  design (`ctx_edit`/`ctx_patch` stay session-rooted until undo history is
+  multi-repo-aware); unknown aliases error with the list of known ones, and
+  jail + secret screening apply against the resolved repo root.
+
+## [3.9.0] — 2026-07-04
+
+### Added
+- **The AI Gateway (team mode).** The engine can now run as a shared
+  org gateway — one deployment your whole team points its IDEs at, with
+  per-person attribution, governance and audited savings. Compiled into the
+  default binary (`gateway-server` feature), local-free invariant intact:
+  nothing changes for solo use until you run it.
+  - **`lean-ctx gateway serve`** — multi-provider reverse proxy
+    (Anthropic / OpenAI / Gemini / Ollama / custom registry) with per-person
+    bearer keys, usage metering to Postgres (`usage_events`), wire-shape
+    translation (an Anthropic-speaking IDE can call an OpenAI-hosted model and
+    vice versa) and a token-protected admin console on a separate port.
+  - **`lean-ctx gateway init`** — plug-and-play scaffold: docker compose,
+    `.env`, key file and a step-by-step README in one command;
+    `gateway doctor` preflights config, secrets, DB and ports.
+  - **`lean-ctx gateway keys add|list|rotate|revoke`** — key lifecycle
+    without storing plaintext (SHA-256 hashes only, shown once).
+    `rotate` (GL enterprise#67) replaces every key of a person in one atomic
+    file swap — no window where the person has zero valid keys — and keeps
+    team/project attribution.
+  - **`GET /v1/models`** (GL enterprise#63) — the curated org model catalog
+    from `[proxy.routing.aliases]`, content-negotiated: OpenAI-shape and
+    Anthropic-shape clients each get their native list format. IDEs discover
+    org names like `zuehlke/fast`; the gateway resolves the alias, injects
+    upstream credentials and stamps `routed_from` into the ledger.
+  - **`/me` personal usage view** (GL enterprise#64/#65) — each person signs
+    in with their own gateway key and sees exactly their spend, savings,
+    trend, models and projects — never anyone else's. Dark/light, 24h–90d
+    windows, savings-share KPI.
+  - **Signed org-policy gates** (GL enterprise#25/#66) — under a signed,
+    pinned, `enforced = true` org policy the forward path refuses:
+    models outside the `[routing].allowed_models` ceiling (403), spend above
+    `[budgets]` caps per person/UTC-day or project/UTC-month (429), and — new —
+    requests beyond `[budgets].max_requests_per_minute_per_person` (429 with
+    an honest `Retry-After` of the seconds until the minute rolls). Errors
+    arrive in the caller's wire shape; refusals are counted on
+    `leanctx_policy_blocked_total{reason="model_ceiling"|"budget"|"rate_limit"}`.
+    Without an enforced org policy every gate is a no-op.
+  - **Evidence & GDPR** (GL enterprise#36/#39) — usage retention windows,
+    Ed25519-signed evidence exports (`gateway evidence` / `evidence verify`),
+    person-scoped `gateway gdpr export|delete`, and Blake3 pseudonymization
+    for person identifiers at rest.
+- **Multi-window visibility (GH #694).** `lean-ctx doctor` no longer claims
+  "no active session" when sessions exist for other workspaces: run from a
+  directory that isn't an open project root it now reports
+  `none for this directory — recent: frontend (4m ago), backend (1h ago)`,
+  naming every workspace with a live session. The dashboard overview gains a
+  "Connected workspaces" panel (new `/api/workspaces` endpoint) listing each
+  project with status (active <10 min, idle <24 h, stale), last activity,
+  tokens saved and current task — shown as soon as two or more workspaces
+  have sessions.
+
+### Added
+- **Grammar addons: long-tail tree-sitter grammars as signed runtime dylibs
+  (GH #690 Phase 1, PR #695 — thanks @getappz).** Structural understanding no
+  longer has to be compiled in: an extension not covered by the 27 built-in
+  grammars can now resolve through a SHA-256-pinned, per-platform grammar
+  dylib that is `dlopen`'d at runtime — manifest + curated registry
+  (`data/grammar_registry.json`, user-overridable under the same signed-
+  override policy as the addon registry), a loader that verifies the hash pin
+  **on every load** plus the tree-sitter ABI version before handing the
+  grammar to the parser, a five-platform CI build matrix, and a zero-config
+  fetch on first use. Fully offline-safe: no addon installed (or no network,
+  or `addons.policy = locked`, or the new `addons.grammar_auto_fetch = false`
+  for strict-egress orgs) degrades to the regex-signature fallback exactly as
+  before. Installed dylibs land read-only and ad-hoc-signed on macOS; every
+  fetch is logged with its source URL. The registry ships empty — which of
+  the 27 static grammars (if any) move to the addon tier is a separate,
+  telemetry-gated Phase 2 decision.
+
+### Changed
+- **The heredoc-to-interpreter refusal now hands the agent the recovery path
+  (GL #1161).** Policy review outcome: the block stays — inline code embedded
+  in the command string never exists as an inspectable artifact, while a
+  script file passes the write path's own guards and leaves an audit trail.
+  But the old message ("Use a script file instead") left agents rediscovering
+  the workaround by trial and error; the refusal now spells it out: write the
+  code to a file (Write/ctx_edit), then `python3 /tmp/snippet`.
+
+### Fixed
+- **A transient `roots/list` failure no longer disables project-root detection
+  for the whole MCP session (GH #694).** The first tool call resolves client
+  roots exactly once; when that single attempt failed (e.g. the IDE window was
+  still starting up — the VS Code second-window pattern), the server never
+  asked again and fell back to cwd guessing for the session's lifetime. Failed
+  attempts now re-arm resolution for up to 3 tries; a `-32601 Method not found`
+  (client declares the capability but doesn't implement it — Cursor) still
+  gives up immediately, and `roots/list_changed` restores the retry budget.
+- **`dev-install` on Windows no longer hard-fails with `ACCESS_DENIED` while an
+  IDE holds the old binary open (GH #691).** The final swap did a bare
+  replace-rename, which Windows refuses for as long as any process runs the old
+  image — and dev-install deliberately never kills the IDE-owned MCP server
+  (#1036), so no retry budget could ever succeed (measured: identical failure
+  after 60 s). The install now uses the rustup-style sidecar swap: the running
+  binary is renamed aside to `lean-ctx.old.exe` (allowed for mapped images),
+  the fresh binary lands at the real path, and the sidecar is reclaimed on the
+  next install once its holder exited. If even the rename-aside is blocked
+  (AV/EDR-style zero-sharing lock), the error now explains the cause and the
+  fix instead of a bare OS error code. Thanks @getappz for the measurement
+  work in #691/#692.
+- **`ctx_share` handovers with org agent ids (`team:alice`) are now pullable on
+  Windows.** The share filename embedded the agent id verbatim; NTFS interprets
+  `:` as an Alternate Data Stream, so the write "succeeded" but the file never
+  appeared in the store — the receiving agent saw "No shared contexts for you".
+  Filenames now use a filesystem-safe slug (`[A-Za-z0-9._-]`, everything else
+  `-`); the true agent id still lives inside the JSON payload.
+- **Background knowledge writers can no longer clobber facts a parallel
+  `remember` just committed (lost-update, #326 class).** The consolidation
+  pipeline (`apply_artifacts_to_stores`) and the gateway memory adapter
+  (`addon_memory` ingest) both did load → modify → blind `save()` from a
+  background thread; a fact committed between their load and save was silently
+  dropped — surfacing as flaky "no current fact exists" errors on
+  `ctx_knowledge relate` right after a successful `remember`. Both writers now
+  go through `ProjectKnowledge::mutate_locked` like every other writer.
+- **CI: three timing/environment flakes hardened.** The
+  `session_lock_timeout` prompt-timeout bounds (400 ms) fired falsely on loaded
+  Windows runners — the assertion only distinguishes "timed out" from "hung",
+  so the bound is now 5 s; the lock-ordering check now skips `#[cfg(test)]`-gated
+  statics (test-only locks need no production lock-ordering documentation); the
+  two production gateway locks from enterprise#25 (`SNAPSHOT`, `LEDGER`) are
+  documented in `LOCK_ORDERING.md` (L58/L59).
+- **`max_ram_percent` is now actually enforced under Cursor/MCP load — no more
+  75 GB OOM-kill-respawn cycles (GH #685).** Two compounding gaps, both closed:
+  *Uncontrolled build growth:* the parallel BM25/graph index builds fanned the
+  whole corpus across the rayon pool in one shot — on a 1M+-file multi-root
+  setup the transient build state outran the 3 s memory guardian straight into
+  the kernel OOM killer. Builds now run in 2000-file batches with a guardian
+  check between batches (order-preserving, so indexes stay byte-identical —
+  equivalence-tested), a new admission gate (`index_admission`) degrades
+  corpora whose estimated peak exceeds the RSS headroom to the sequential
+  build up front, and extra workspace roots are indexed one at a time on a
+  single supervisor thread instead of up to 8 concurrent graph+BM25 pairs.
+  *Eviction blind spots:* the eviction orchestrator reasoned over session-cache
+  token utilization, which cannot see the HNSW/ANN graph, the resident trigram
+  search indexes or the materialized graph indexes — under Hard/Critical RSS
+  pressure it could conclude "nothing to do" while those structures dominated
+  RSS. RSS pressure now enforces a floor action (Hard ⇒ unload indices,
+  Critical ⇒ emergency drop), and `UnloadIndices`/`EmergencyDrop` additionally
+  clear the ANN cache (new `ann_cache::clear()` + `memory_usage_bytes()`), the
+  resident search indexes (`search_index::clear_resident()`) and the graph
+  cache. All evicted structures rebuild transparently on next use.
+- **`sed`/`awk` file dumps are verbatim output — no more dictionary-mangled
+  source (GH #688).** A range-print like `sed -n '10,50p' file.ps1` fell into
+  the generic terse pipeline, whose dictionary layer word-substitutes code
+  identifiers with no code-awareness (`function`→`fn`, `return`→`ret`, bare
+  `else` lines dropped) — corrupting code read via sed/awk instead of `cat`.
+  `sed`/`awk`/`gawk`/`mawk`/`nawk` now classify as file viewers like
+  `cat`/`head`/`tail`. In-place edits are excluded via a token-based flag check
+  (`-i`, `-i.bak`, `-ni` clusters, `--in-place[=suffix]`, gawk `-i inplace`) —
+  deliberately NOT a substring match, so filenames like `my-input.txt` or
+  `data-import.csv` can't silently re-enter the terse pipeline. Byte-exact
+  regression test with the original PowerShell repro. Thanks @getappz for the
+  report and the PR the fix is based on (#689).
+- **`setup` no longer panics when a client's MCP-instructions cap lands inside
+  a multi-byte character (GH #680).** The Claude Code / CodeBuddy 2048-char
+  truncation used a raw byte slice; when the cut fell inside an em-dash the
+  whole setup crashed ("end byte index 2048 is not a char boundary",
+  live-reported at setup level 3, step 3/13). The cut now backs up to the
+  previous char boundary (`truncate_instructions`, unit-tested with the exact
+  crash shape).
+- **`doctor` no longer false-flags a working OpenCode install (GH #686).**
+  Two gaps: `has_lean_ctx_mcp_entry` only walked `mcp.servers.lean-ctx`, but
+  OpenCode's schema (opencode.ai/config.json) nests servers DIRECTLY under
+  `mcp` — the direct-child form is now recognized too; and OpenCode was absent
+  from the SKILL.md candidate list (checked: `~/.config/opencode/skills/
+  lean-ctx/SKILL.md`) — it is now both checked by doctor AND installed by
+  `install_all_skills` when OpenCode is detected, so check and installer can't
+  drift apart.
+- **Anchored line-1 edits of UTF-8-BOM files no longer conflict forever
+  (GH #683 follow-up).** With ctx_read stripping the BOM (output honesty #683),
+  the anchor hash the model holds for line 1 is over the BOM-less text — but
+  `ctx_patch` validated anchors against the raw preimage, so the hashes could
+  never match and every retry conflicted again. The edit side now validates
+  against the same BOM-less view and re-prepends the BOM on write (the BOM is
+  an encoding artifact of the file, not of the edit).
 - **Shell allowlist no longer splits commands at backslash-escaped operators
   (GL #1160).** In restricted (allowlisted) mode, `rg -n split\.label\|foo src/`
   was split at the escaped pipe, so the pattern fragment after it was validated

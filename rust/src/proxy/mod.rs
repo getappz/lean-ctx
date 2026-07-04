@@ -24,14 +24,19 @@ pub mod history_prune;
 pub mod holdout;
 pub mod introspect;
 pub mod metrics;
+pub mod models_api;
 pub mod openai;
 pub mod openai_responses;
 pub mod openai_responses_ws;
 pub mod output_savings;
+pub mod pii;
+pub mod policy_gate;
 pub mod prose;
 pub mod prose_ranker;
 pub mod providers;
 pub mod routing;
+#[cfg(feature = "shape-xlat")]
+pub mod shape_xlat;
 #[cfg(test)]
 mod stats_tests;
 pub mod tool_kind;
@@ -445,6 +450,8 @@ pub async fn start_proxy_with_token(port: u16, auth_token: Option<String>) -> an
         chatgpt_cookies,
     };
 
+    // `mut` is only exercised by the gateway-server merge below.
+    #[cfg_attr(not(feature = "gateway-server"), allow(unused_mut))]
     let mut app = Router::new()
         .route("/health", get(health))
         .route("/status", get(status_handler))
@@ -483,6 +490,12 @@ pub async fn start_proxy_with_token(port: u16, auth_token: Option<String>) -> an
         .route("/backend-api", any(chatgpt::backend_api_handler))
         .route("/backend-api/{*rest}", any(chatgpt::backend_api_handler))
         .route("/v1/references/{id}", get(v1_resolve_reference))
+        // Org model catalog (enterprise#63): IDE clients discover the curated
+        // alias namespace (`zuehlke/fast` → provider:model) and verify their
+        // key. Exact-match only — `/v1/models/{...}` subpaths stay Gemini
+        // passthrough in the fallback router.
+        .route("/v1/models", get(models_api::handler))
+        .route("/models", get(models_api::handler))
         // Drop-in `compress(messages, model)` contract (#739): deterministic
         // messages-in / messages-out compression for SDK clients.
         .route("/v1/compress", post(compress_api::handler))
@@ -490,7 +503,17 @@ pub async fn start_proxy_with_token(port: u16, auth_token: Option<String>) -> an
         // `/providers/{id}/...` forwards to the registry entry with that id,
         // speaking its declared wire shape. New provider = config, not code.
         .route("/providers/{id}/{*rest}", any(providers::handler))
-        .fallback(fallback_router)
+        .fallback(fallback_router);
+
+    // Personal usage view (enterprise#64): `/me` shell + guarded `/api/me/*`.
+    // Merged before the guard layers so host_guard and auth wrap it too; the
+    // shell paths themselves are exempted inside `proxy_auth_guard`.
+    #[cfg(feature = "gateway-server")]
+    {
+        app = app.merge(crate::gateway_server::user_api::router());
+    }
+
+    let mut app = app
         .layer(axum::middleware::from_fn(move |req, next| {
             let allowed = allowed_hosts.clone();
             host_guard(req, next, allowed)
@@ -715,7 +738,7 @@ async fn proxy_auth_guard(
     gateway_keys: Arc<gateway_identity::GatewayKeys>,
 ) -> Result<Response, Response> {
     let path = req.uri().path();
-    if path == "/health" {
+    if path == "/health" || me_shell_path(path) {
         return Ok(next.run(req).await);
     }
 
@@ -797,8 +820,31 @@ fn attach_gateway_tags(req: &mut axum::extract::Request, mut tags: gateway_ident
     {
         tags.project = Some(project.to_string());
     }
+    // GDPR pseudonymization (enterprise#39): applied at this single
+    // choke-point, so budgets, usage rows, dashboards and logs only ever see
+    // the pseudonym. No-op unless [gateway_server].pseudonymize_persons.
+    if let Some(person) = tags.person.as_deref()
+        && pii::enabled()
+    {
+        tags.person = Some(pii::pseudonymize(person));
+    }
     if !tags.is_empty() {
         req.extensions_mut().insert(tags);
+    }
+}
+
+/// The personal view's static shell (`/me` + assets) renders without a key —
+/// like the admin console's login screen, every number behind it comes from
+/// the guarded `/api/me/usage`. Compiled out with the `gateway-server` feature.
+fn me_shell_path(path: &str) -> bool {
+    #[cfg(feature = "gateway-server")]
+    {
+        crate::gateway_server::user_api::is_shell_path(path)
+    }
+    #[cfg(not(feature = "gateway-server"))]
+    {
+        let _ = path;
+        false
     }
 }
 
@@ -843,6 +889,9 @@ fn is_provider_route(path: &str) -> bool {
         || path.starts_with("/responses")
         || path.starts_with("/messages")
         || path.starts_with("/backend-api")
+        // Bare model-catalog discovery (enterprise#63): clients whose base URL
+        // omits `/v1` send `GET /models` with their provider key.
+        || path == "/models"
 }
 
 /// Decides whether a request authenticates via a provider API key alone, without
